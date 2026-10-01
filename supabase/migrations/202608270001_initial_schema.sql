@@ -1,0 +1,32 @@
+create extension if not exists pgcrypto;
+create type public.admin_role as enum ('ADMIN','OPERATOR');
+create type public.league_status as enum ('DRAFT','IN_PROGRESS','COMPLETED');
+create type public.result_type as enum ('NORMAL','FORFEIT');
+
+create table public.admin_users(user_id uuid primary key references auth.users(id) on delete cascade,display_name text not null,role public.admin_role not null default 'ADMIN',created_at timestamptz not null default now());
+create table public.players(id uuid primary key default gen_random_uuid(),name text not null,division text,is_active boolean not null default true,created_at timestamptz not null default now(),updated_at timestamptz not null default now());
+create table public.leagues(id uuid primary key default gen_random_uuid(),round_number integer unique not null check(round_number>0),league_date date not null,status public.league_status not null default 'DRAFT',best_of_sets integer not null default 3 check(best_of_sets=3),created_at timestamptz not null default now(),updated_at timestamptz not null default now(),completed_at timestamptz);
+create table public.league_participants(id uuid primary key default gen_random_uuid(),league_id uuid not null references public.leagues(id) on delete cascade,player_id uuid not null references public.players(id),name_snapshot text not null,division_snapshot text,schedule_position integer not null check(schedule_position>0),created_at timestamptz not null default now(),unique(league_id,player_id),unique(league_id,schedule_position));
+create table public.matches(id uuid primary key default gen_random_uuid(),league_id uuid not null references public.leagues(id) on delete cascade,player_a_id uuid not null references public.players(id),player_b_id uuid not null references public.players(id),round_no integer not null check(round_no>0),round_match_no integer not null check(round_match_no>0),created_at timestamptz not null default now(),updated_at timestamptz not null default now(),check(player_a_id<>player_b_id),unique(league_id,round_no,round_match_no));
+create unique index matches_unique_pair on public.matches(league_id,least(player_a_id,player_b_id),greatest(player_a_id,player_b_id));
+create table public.match_results(id uuid primary key default gen_random_uuid(),match_id uuid unique not null references public.matches(id) on delete cascade,player_a_sets integer not null,player_b_sets integer not null,result_type public.result_type not null default 'NORMAL',created_by uuid not null references auth.users(id),created_at timestamptz not null default now(),updated_at timestamptz not null default now(),check((player_a_sets,player_b_sets) in ((2,0),(2,1),(1,2),(0,2))));
+create table public.match_result_history(id uuid primary key default gen_random_uuid(),match_id uuid not null references public.matches(id),old_result jsonb not null,new_result jsonb not null,changed_by uuid not null references auth.users(id),changed_at timestamptz not null default now());
+create table public.league_standings(id uuid primary key default gen_random_uuid(),league_id uuid not null references public.leagues(id) on delete cascade,player_id uuid not null references public.players(id),rank integer not null,matches_played integer not null,wins integer not null,losses integer not null,sets_won integer not null,sets_lost integer not null,set_difference integer not null,tie_break_data jsonb not null default '{}',calculated_at timestamptz not null default now(),unique(league_id,player_id));
+
+create function public.is_admin() returns boolean language sql stable security definer set search_path='' as $$select exists(select 1 from public.admin_users where user_id=auth.uid() and role in ('ADMIN','OPERATOR'))$$;
+alter table public.admin_users enable row level security;alter table public.players enable row level security;alter table public.leagues enable row level security;alter table public.league_participants enable row level security;alter table public.matches enable row level security;alter table public.match_results enable row level security;alter table public.match_result_history enable row level security;alter table public.league_standings enable row level security;
+create policy "admins read admin users" on public.admin_users for select using(public.is_admin());
+create policy "public read active players" on public.players for select using(is_active or public.is_admin());
+create policy "admins manage players" on public.players for all using(public.is_admin()) with check(public.is_admin());
+create policy "public read published leagues" on public.leagues for select using(status in ('IN_PROGRESS','COMPLETED') or public.is_admin());
+create policy "admins manage leagues" on public.leagues for all using(public.is_admin()) with check(public.is_admin());
+create policy "public read published participants" on public.league_participants for select using(exists(select 1 from public.leagues l where l.id=league_id and (l.status in ('IN_PROGRESS','COMPLETED') or public.is_admin())));
+create policy "admins manage participants" on public.league_participants for all using(public.is_admin()) with check(public.is_admin());
+create policy "public read published matches" on public.matches for select using(exists(select 1 from public.leagues l where l.id=league_id and (l.status in ('IN_PROGRESS','COMPLETED') or public.is_admin())));
+create policy "admins manage matches" on public.matches for all using(public.is_admin()) with check(public.is_admin());
+create policy "public read published results" on public.match_results for select using(exists(select 1 from public.matches m join public.leagues l on l.id=m.league_id where m.id=match_id and l.status in ('IN_PROGRESS','COMPLETED')) or public.is_admin());
+create policy "admins manage results" on public.match_results for all using(public.is_admin()) with check(public.is_admin());
+create policy "admins read history" on public.match_result_history for select using(public.is_admin());create policy "admins add history" on public.match_result_history for insert with check(public.is_admin());
+create policy "public read published standings" on public.league_standings for select using(exists(select 1 from public.leagues l where l.id=league_id and l.status in ('IN_PROGRESS','COMPLETED')) or public.is_admin());
+create policy "admins manage standings" on public.league_standings for all using(public.is_admin()) with check(public.is_admin());
+alter publication supabase_realtime add table public.match_results;alter publication supabase_realtime add table public.leagues;

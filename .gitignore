@@ -1,0 +1,15 @@
+.next*
+node_modules
+.env*
+!.env.example
+.dev.vars*
+.pnpm-store/
+supabase/.temp/
+/public-release/
+/public-release.zip
+/private-backup/
+coverage
+*.tsbuildinfo
+/dist/
+.vinext/
+.wrangler/

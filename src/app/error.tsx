@@ -1,0 +1,1 @@
+"use client";export default function ErrorPage({reset}:{reset:()=>void}){return <main className="container"><div className="card"><h1>문제가 발생했습니다</h1><p className="muted">잠시 후 다시 시도해 주세요.</p><button className="btn" onClick={reset}>다시 시도</button></div></main>}
